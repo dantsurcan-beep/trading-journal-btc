@@ -9,7 +9,6 @@ st.set_page_config(page_title="BTC Perpetual Trading Journal", layout="wide")
 st.title("₿ Jurnal Bitcoin Perpetual (Kraken Futures)")
 st.write("Monitorizează exclusiv pozițiile tale de BTC, istoricul complet și comisioanele.")
 
-# Fișierul local unde se salvează PERMANENT istoricul (nu se va șterge automat)
 DB_FILE = "btc_trading_journal.csv"
 
 def load_persistent_history():
@@ -22,34 +21,46 @@ def load_persistent_history():
             "Comision Kraken", "Profit/Pierdere Net (PnL)"
         ])
 
-# Panoul lateral pentru conexiunea API
+api_key_input = ""
+api_secret_input = ""
+
+try:
+    api_key_input = st.secrets.get("KRAKEN_API_KEY", "")
+    api_secret_input = st.secrets.get("KRAKEN_API_SECRET", "")
+except Exception:
+    pass
+
 with st.sidebar:
     st.header("🔑 Conexiune Kraken Futures")
-    st.markdown("Introdu cheile API (cu drepturi de citire/Query).")
-    api_key_input = st.text_input("Kraken API Key", type="password")
-    api_secret_input = st.text_input("Kraken API Secret", type="password")
-    
-    exchange = None
-    if api_key_input and api_secret_input:
-        try:
-            exchange = ccxt.krakenfutures({
-                'apiKey': api_key_input,
-                'secret': api_secret_input,
-                'enableRateLimit': True
-            })
-            exchange.load_markets()
-            st.success("Conectat la Kraken!")
-        except Exception as e:
-            st.error(f"Eroare: {e}")
+    if not api_key_input:
+        api_key_input = st.text_input("Kraken API Key", type="password")
+    else:
+        st.success("API Key încărcat automat! 🔒")
+        
+    if not api_secret_input:
+        api_secret_input = st.text_input("Kraken API Secret", type="password")
+    else:
+        st.success("API Secret încărcat automat! 🔒")
 
-# Funcție preluare strict poziții BTC active
+exchange = None
+if api_key_input and api_secret_input:
+    try:
+        exchange = ccxt.krakenfutures({
+            'apiKey': api_key_input.strip(),
+            'secret': api_secret_input.strip(),
+            'enableRateLimit': True
+        })
+        exchange.load_markets()
+        st.sidebar.success("Conectat la Kraken cu succes!")
+    except Exception as e:
+        st.error(f"Eroare de conexiune API: {e}")
+
 def fetch_btc_positions(exc):
     try:
         positions = exc.fetch_positions()
-        # Filtrăm strict pentru Bitcoin perpetual (de obicei simbolul conține PI_XBTUSD sau similar pe Kraken Futures)
         btc_positions = [
             p for p in positions 
-            if float(p.get('contracts', 0)) > 0 and 'BTC' in p.get('symbol', '').upper() or 'XBT' in p.get('symbol', '').upper()
+            if float(p.get('contracts', 0)) > 0 and ('BTC' in p.get('symbol', '').upper() or 'XBT' in p.get('symbol', '').upper())
         ]
         data = []
         for p in btc_positions:
@@ -81,7 +92,7 @@ if exchange:
             
     with tab2:
         st.subheader("Jurnal Manual / Arhivare Tranzacții Închise")
-        st.markdown("Folosește acest formular pentru a salva definitiv o tranzacție încheiată (Take Profit / Stop Loss / Manual). Istoricul salvat aici **nu se va șterge niciodată**.")
+        st.markdown("Folosește acest formular pentru a salva definitiv o tranzacție încheiată. Istoricul salvat aici **nu se va șterge niciodată**.")
         
         with st.form("manual_trade_form", clear_on_submit=True):
             c1, c2 = st.columns(2)
@@ -93,12 +104,11 @@ if exchange:
             with c2:
                 status_iesire = st.selectbox("Cum s-a încheiat?", ["Take Profit", "Stop Loss", "Închis Manual"])
                 pret_iesire = st.number_input("Preț de Iesire ($)", min_value=0.0, format="%.2f")
-                comision_kraken = st.number_input("Comision Kraken ($)", min_value=0.0, format="%.4f")
+                comision_kraken = st.number_input("Comision Kraken ($)", min_value=0.0, format="%.2f")
                 
             buton_salvare = st.form_submit_button("Salvează în Istoricul Permanent")
             
             if buton_salvare:
-                # Calcul Profit / Pierdere Net
                 if tip_tranzactie == "Long":
                     pnl_brut = (pret_iesire - pret_intrare) * cantitate
                 else:
@@ -119,7 +129,6 @@ if exchange:
                     "Profit/Pierdere Net (PnL)": pnl_net
                 }])
                 
-                # Încărcăm istoricul existent, adăugăm rândul nou și salvăm pe disc
                 df_hist = load_persistent_history()
                 df_hist = pd.concat([df_hist, rand_nou], ignore_index=True)
                 df_hist.to_csv(DB_FILE, index=False)
@@ -140,7 +149,6 @@ if exchange:
             
             st.dataframe(df_istoric, use_container_width=True)
             
-            # Opțiune de descărcare a istoricului ca fișier CSV de rezervă (Backup)
             csv_export = df_istoric.to_csv(index=False).encode('utf-8')
             st.download_button(
                 label="📥 Descarcă o copie de rezervă a istoricului (CSV)",
@@ -149,6 +157,6 @@ if exchange:
                 mime="text/csv",
             )
         else:
-            st.info("Istoricul este gol momentan. Adaugă tranzacții din tab-ul anterior sau așteaptă sincronizarea.")
+            st.info("Istoricul este gol momentan. Adaugă tranzacții din tab-ul anterior.")
 else:
-    st.info("👈 Introdu cheile API în stânga pentru a începe.")
+    st.info("👈 Introdu cheile API în stânga sau asigură-te că fișierul secrets.toml este completat corect.")
