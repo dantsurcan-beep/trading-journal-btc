@@ -4,111 +4,130 @@ import ccxt
 from datetime import datetime
 import os
 
-st.set_page_config(page_title="BTC Perpetual Trading Journal", layout="wide")
+st.set_page_config(page_title="Kraken Universal Trading Journal", layout="wide")
 
-st.title("₿ Jurnal Bitcoin Perpetual (Kraken Futures)")
-st.write("Monitorizează exclusiv pozițiile tale de BTC, istoricul complet și comisioanele.")
+st.title("📊 Jurnal Universal de Trading (Kraken)")
+st.write("Jurnalul tău centralizat pentru orice monedă (Spot sau Futures), cu date complete, valori în USD și PnL.")
 
-DB_FILE = "btc_trading_journal.csv"
+DB_FILE = "universal_trading_journal.csv"
 
 def load_persistent_history():
     if os.path.exists(DB_FILE):
         return pd.read_csv(DB_FILE)
     else:
         return pd.DataFrame(columns=[
-            "Data", "Simbol", "Tip (Long/Short)", "Preț Intrare", 
-            "Cantitate (Contracte)", "Status", "Preț Ieșire", 
+            "Data", "Piață", "Simbol / Monedă", "Tip (Long/Short)", "Preț Intrare", 
+            "Cantitate", "Valoare USD", "Status", "Preț Ieșire", 
             "Comision Kraken", "Profit/Pierdere Net (PnL)"
         ])
 
-api_key_input = ""
-api_secret_input = ""
-
-try:
-    api_key_input = st.secrets.get("KRAKEN_API_KEY", "")
-    api_secret_input = st.secrets.get("KRAKEN_API_SECRET", "")
-except Exception:
-    pass
-
 with st.sidebar:
-    st.header("🔑 Conexiune Kraken Futures")
-    if not api_key_input:
-        api_key_input = st.text_input("Kraken API Key", type="password")
-    else:
-        st.success("API Key încărcat automat! 🔒")
-        
-    if not api_secret_input:
-        api_secret_input = st.text_input("Kraken API Secret", type="password")
-    else:
-        st.success("API Secret încărcat automat! 🔒")
+    st.header("🔑 Conexiune Kraken")
+    piata_ales = st.selectbox("Alege Piața", ["Futures", "Spot"])
+    
+    default_key = ""
+    default_secret = ""
+    
+    try:
+        if piata_ales == "Futures":
+            default_key = st.secrets.get("KRAKEN_FUTURES_KEY", "")
+            default_secret = st.secrets.get("KRAKEN_FUTURES_SECRET", "")
+        else:
+            default_key = st.secrets.get("KRAKEN_SPOT_KEY", "")
+            default_secret = st.secrets.get("KRAKEN_SPOT_SECRET", "")
+    except Exception:
+        pass
+
+    st.markdown("---")
+    api_key_input = st.text_input(f"Kraken {piata_ales} API Key", value=default_key, type="password")
+    api_secret_input = st.text_input(f"Kraken {piata_ales} API Secret", value=default_secret, type="password")
 
 exchange = None
 if api_key_input and api_secret_input:
     try:
-        exchange = ccxt.krakenfutures({
-            'apiKey': api_key_input.strip(),
-            'secret': api_secret_input.strip(),
-            'enableRateLimit': True
-        })
-        exchange.load_markets()
-        st.sidebar.success("Conectat la Kraken cu succes!")
-    except Exception as e:
-        st.error(f"Eroare de conexiune API: {e}")
-
-def fetch_btc_positions(exc):
-    try:
-        positions = exc.fetch_positions()
-        btc_positions = [
-            p for p in positions 
-            if float(p.get('contracts', 0)) > 0 and ('BTC' in p.get('symbol', '').upper() or 'XBT' in p.get('symbol', '').upper())
-        ]
-        data = []
-        for p in btc_positions:
-            data.append({
-                "Simbol": p.get('symbol'),
-                "Direcție": p.get('side', 'N/A').upper(),
-                "Preț Intrare": p.get('entryPrice'),
-                "Contracte": p.get('contracts'),
-                "Valoare Notională": p.get('notional'),
-                "P&L Nerealizat": p.get('unrealizedPnl'),
-                "Preț Lichidare": p.get('liquidationPrice')
+        if piata_ales == "Futures":
+            exchange = ccxt.krakenfutures({
+                'apiKey': api_key_input.strip(),
+                'secret': api_secret_input.strip(),
+                'enableRateLimit': True
             })
-        return pd.DataFrame(data)
+        else:
+            exchange = ccxt.kraken({
+                'apiKey': api_key_input.strip(),
+                'secret': api_secret_input.strip(),
+                'enableRateLimit': True
+            })
+        
+        exchange.load_markets()
+        st.sidebar.success(f"Conectat la Kraken {piata_ales} cu succes! ✅")
     except Exception as e:
-        st.warning(f"Nu s-au putut prelua pozițiile active: {e}")
+        st.sidebar.error(f"Eroare de conexiune: {e}")
+
+def fetch_all_positions(exc, piata):
+    try:
+        if piata == "Futures":
+            positions = exc.fetch_positions()
+            active_pos = [p for p in positions if float(p.get('contracts', 0)) > 0]
+            data = []
+            for p in active_pos:
+                data.append({
+                    "Simbol": p.get('symbol'),
+                    "Direcție": p.get('side', 'N/A').upper(),
+                    "Preț Intrare": p.get('entryPrice'),
+                    "Cantitate": p.get('contracts'),
+                    "Valoare Notională ($)": p.get('notional'),
+                    "P&L Nerealizat ($)": p.get('unrealizedPnl'),
+                    "Preț Lichidare": p.get('liquidationPrice')
+                })
+            return pd.DataFrame(data)
+        else:
+            balance = exc.fetch_balance()
+            free_bal = balance.get('free', {})
+            data = []
+            for asset, amount in free_bal.items():
+                if amount > 0 and asset not in ['ZUSD', 'ZEUR', 'USDT', 'USDC']:
+                    data.append({
+                        "Monedă": asset,
+                        "Cantitate Disponibilă": amount
+                    })
+            return pd.DataFrame(data)
+    except Exception as e:
+        st.warning(f"Nu s-au putut prelua datele live: {e}")
         return pd.DataFrame()
 
 if exchange:
-    tab1, tab2, tab3 = st.tabs(["📌 Poziție BTC Activă (Live)", "➕ Adaugă Manual în Istoric", "📜 Istoricul Permanent (Salvat)"])
+    tab1, tab2, tab3 = st.tabs(["📌 Poziții / Active Live", "➕ Adaugă Tranzacție în Jurnal", "📜 Istoricul Universal (Salvat)"])
     
     with tab1:
-        st.subheader("Poziția ta curentă pe Bitcoin Perpetual")
-        st.info("Chiar dacă ai avut laptopul închis, aici vezi situația actuală direct din bursa Kraken.")
-        df_active = fetch_btc_positions(exchange)
+        st.subheader(f"Monitorizare în timp real - Kraken {piata_ales}")
+        st.info("Aici vezi toate activele sau pozițiile tale deschise pe orice monedă, direct din bursa Kraken.")
+        df_active = fetch_all_positions(exchange, piata_ales)
         if not df_active.empty:
             st.dataframe(df_active, use_container_width=True)
         else:
-            st.warning("Momentan nu ai nicio poziție deschisă pe Bitcoin pe Kraken Futures.")
+            st.info("Momentan nu ai poziții active sau active în portofoliu.")
             
     with tab2:
-        st.subheader("Jurnal Manual / Arhivare Tranzacții Închise")
-        st.markdown("Folosește acest formular pentru a salva definitiv o tranzacție încheiată. Istoricul salvat aici **nu se va șterge niciodată**.")
+        st.subheader("Jurnal Universal de Tranzacții")
+        st.markdown("Completează detaliile tranzacției. Jurnalul va înregistra data, moneda, valoarea în USD și rezultatul final.")
         
-        with st.form("manual_trade_form", clear_on_submit=True):
+        with st.form("universal_trade_form", clear_on_submit=True):
             c1, c2 = st.columns(2)
             with c1:
-                simbol_btc = st.text_input("Simbol", value="PI_XBTUSD")
+                moneda_simbol = st.text_input("Simbol / Monedă (ex: SOL/USD, BTC/USD, ETH)", value="BTC/USD")
                 tip_tranzactie = st.selectbox("Direcție", ["Long", "Short"])
                 pret_intrare = st.number_input("Preț de Intrare ($)", min_value=0.0, format="%.2f")
-                cantitate = st.number_input("Cantitate / Contracte", min_value=0.0, format="%.4f")
+                cantitate = st.number_input("Cantitate Tranzacționată", min_value=0.0, format="%.4f")
             with c2:
-                status_iesire = st.selectbox("Cum s-a încheiat?", ["Take Profit", "Stop Loss", "Închis Manual"])
+                status_iesire = st.selectbox("Status Ieșire", ["Take Profit", "Stop Loss", "Închis Manual"])
                 pret_iesire = st.number_input("Preț de Iesire ($)", min_value=0.0, format="%.2f")
                 comision_kraken = st.number_input("Comision Kraken ($)", min_value=0.0, format="%.2f")
                 
-            buton_salvare = st.form_submit_button("Salvează în Istoricul Permanent")
+            buton_salvare = st.form_submit_button("Salvează Tranzacția în Jurnal")
             
             if buton_salvare:
+                valoare_usd = pret_intrare * cantitate
+                
                 if tip_tranzactie == "Long":
                     pnl_brut = (pret_iesire - pret_intrare) * cantitate
                 else:
@@ -119,10 +138,12 @@ if exchange:
                 
                 rand_nou = pd.DataFrame([{
                     "Data": data_ora,
-                    "Simbol": simbol_btc,
+                    "Piață": piata_ales,
+                    "Simbol / Monedă": moneda_simbol.upper(),
                     "Tip (Long/Short)": tip_tranzactie,
                     "Preț Intrare": pret_intrare,
-                    "Cantitate (Contracte)": cantitate,
+                    "Cantitate": cantitate,
+                    "Valoare USD": valoare_usd,
                     "Status": status_iesire,
                     "Preț Ieșire": pret_iesire,
                     "Comision Kraken": comision_kraken,
@@ -132,10 +153,10 @@ if exchange:
                 df_hist = load_persistent_history()
                 df_hist = pd.concat([df_hist, rand_nou], ignore_index=True)
                 df_hist.to_csv(DB_FILE, index=False)
-                st.success("Tranzacția a fost salvată permanent în istoricul tău!")
+                st.success("Tranzacția a fost înregistrată cu succes în jurnal!")
 
     with tab3:
-        st.subheader("Arhiva ta permanentă de tranzacții Bitcoin")
+        st.subheader("Arhiva Universală de Tranzacții")
         df_istoric = load_persistent_history()
         
         if not df_istoric.empty:
@@ -151,12 +172,12 @@ if exchange:
             
             csv_export = df_istoric.to_csv(index=False).encode('utf-8')
             st.download_button(
-                label="📥 Descarcă o copie de rezervă a istoricului (CSV)",
+                label="📥 Descarcă arhiva completă (CSV)",
                 data=csv_export,
-                file_name="backup_istoric_btc.csv",
+                file_name="jurnal_universal_trading.csv",
                 mime="text/csv",
             )
         else:
-            st.info("Istoricul este gol momentan. Adaugă tranzacții din tab-ul anterior.")
+            st.info("Jurnalul este gol momentan. Adaugă prima tranzacție din tab-ul anterior.")
 else:
-    st.info("👈 Introdu cheile API în stânga sau asigură-te că fișierul secrets.toml este completat corect.")
+    st.info("👈 Introdu cheile API în meniul din stânga pentru a începe.")
