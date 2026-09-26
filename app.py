@@ -7,7 +7,7 @@ import os
 st.set_page_config(page_title="Kraken Universal Trading Journal", layout="wide")
 
 st.title("📊 Jurnal Universal de Trading (Kraken)")
-st.write("Jurnalul tău centralizat pentru orice monedă (Spot sau Futures), cu date complete, valori în USD și PnL.")
+st.write("Monitorizează pozițiile live, istoricul complet, valorile în USD și PnL-ul centralizat.")
 
 DB_FILE = "universal_trading_journal.csv"
 
@@ -69,24 +69,34 @@ def fetch_all_positions(exc, piata):
             positions = exc.fetch_positions()
             active_pos = [p for p in positions if float(p.get('contracts', 0)) > 0]
             data = []
+            now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
             for p in active_pos:
+                simbol_curat = p.get('symbol', '').replace(':USD', '').replace('/USD', '')
+                pret_intrare = float(p.get('entryPrice', 0) or 0)
+                cantitate = float(p.get('contracts', 0) or 0)
+                valoare_usd = pret_intrare * cantitate
+                pnl = float(p.get('unrealizedPnl', 0) or 0)
+                
                 data.append({
-                    "Simbol": p.get('symbol'),
+                    "Data Preluării": now_str,
+                    "Simbol": simbol_curat,
                     "Direcție": p.get('side', 'N/A').upper(),
-                    "Preț Intrare": p.get('entryPrice'),
-                    "Cantitate": p.get('contracts'),
-                    "Valoare Notională ($)": p.get('notional'),
-                    "P&L Nerealizat ($)": p.get('unrealizedPnl'),
-                    "Preț Lichidare": p.get('liquidationPrice')
+                    "Preț Intrare (\()": f"\){pret_intrare:,.2f}",
+                    "Cantitate": cantitate,
+                    "Valoare Notională (\()": f"\){valoare_usd:,.2f}",
+                    "P&L Nerealizat (\()": f"\){pnl:+,.2f}",
+                    "Preț Lichidare": p.get('liquidationPrice', 'N/A')
                 })
             return pd.DataFrame(data)
         else:
             balance = exc.fetch_balance()
             free_bal = balance.get('free', {})
             data = []
+            now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
             for asset, amount in free_bal.items():
                 if amount > 0 and asset not in ['ZUSD', 'ZEUR', 'USDT', 'USDC']:
                     data.append({
+                        "Data Preluării": now_str,
                         "Monedă": asset,
                         "Cantitate Disponibilă": amount
                     })
@@ -96,25 +106,25 @@ def fetch_all_positions(exc, piata):
         return pd.DataFrame()
 
 if exchange:
-    tab1, tab2, tab3 = st.tabs(["📌 Poziții / Active Live", "➕ Adaugă Tranzacție în Jurnal", "📜 Istoricul Universal (Salvat)"])
+    tab1, tab2, tab3 = st.tabs(["📌 Poziții / Active Live", "➕ Arhivează Tranzacție Închisă", "📜 Istoricul Universal (Salvat)"])
     
     with tab1:
         st.subheader(f"Monitorizare în timp real - Kraken {piata_ales}")
-        st.info("Aici vezi toate activele sau pozițiile tale deschise pe orice monedă, direct din bursa Kraken.")
+        st.info("Pozițiile tale active preluate direct din bursă, cu date curate, valori calculate în USD și PnL.")
         df_active = fetch_all_positions(exchange, piata_ales)
         if not df_active.empty:
-            st.dataframe(df_active, use_container_width=True)
+            st.dataframe(df_active, use_container_width=True, hide_index=True)
         else:
             st.info("Momentan nu ai poziții active sau active în portofoliu.")
             
     with tab2:
-        st.subheader("Jurnal Universal de Tranzacții")
-        st.markdown("Completează detaliile tranzacției. Jurnalul va înregistra data, moneda, valoarea în USD și rezultatul final.")
+        st.subheader("Arhivare Manuală Tranzacții Închise")
+        st.markdown("Folosește acest formular doar pentru a salva în istoric o tranzacție pe care ai încheiat-o deja și vrei să o păstrezi permanent în jurnal.")
         
-        with st.form("universal_trade_form", clear_on_submit=True):
+        with st.form("manual_trade_form", clear_on_submit=True):
             c1, c2 = st.columns(2)
             with c1:
-                moneda_simbol = st.text_input("Simbol / Monedă (ex: SOL/USD, BTC/USD, ETH)", value="BTC/USD")
+                moneda_simbol = st.text_input("Simbol / Monedă (ex: SOL, BTC)", value="BTC")
                 tip_tranzactie = st.selectbox("Direcție", ["Long", "Short"])
                 pret_intrare = st.number_input("Preț de Intrare ($)", min_value=0.0, format="%.2f")
                 cantitate = st.number_input("Cantitate Tranzacționată", min_value=0.0, format="%.4f")
@@ -123,11 +133,10 @@ if exchange:
                 pret_iesire = st.number_input("Preț de Iesire ($)", min_value=0.0, format="%.2f")
                 comision_kraken = st.number_input("Comision Kraken ($)", min_value=0.0, format="%.2f")
                 
-            buton_salvare = st.form_submit_button("Salvează Tranzacția în Jurnal")
+            buton_salvare = st.form_submit_button("Salvează în Istoricul Permanent")
             
             if buton_salvare:
                 valoare_usd = pret_intrare * cantitate
-                
                 if tip_tranzactie == "Long":
                     pnl_brut = (pret_iesire - pret_intrare) * cantitate
                 else:
@@ -153,7 +162,7 @@ if exchange:
                 df_hist = load_persistent_history()
                 df_hist = pd.concat([df_hist, rand_nou], ignore_index=True)
                 df_hist.to_csv(DB_FILE, index=False)
-                st.success("Tranzacția a fost înregistrată cu succes în jurnal!")
+                st.success("Tranzacția a fost arhivată cu succes în jurnal!")
 
     with tab3:
         st.subheader("Arhiva Universală de Tranzacții")
@@ -165,10 +174,10 @@ if exchange:
             
             col_m1, col_m2, col_m3 = st.columns(3)
             col_m1.metric("Total Comisioane Plătite", f"${total_comisioane:.2f}")
-            col_m2.metric("Profit / Pierdere Net Total", f"${total_pnl:.2f}")
+            col_m2.metric("Profit / Pierdere Net Total", f"${total_pnl:.2f}", delta=f"{total_pnl:.2f}")
             col_m3.metric("Total Tranzacții Înregistrate", len(df_istoric))
             
-            st.dataframe(df_istoric, use_container_width=True)
+            st.dataframe(df_istoric, use_container_width=True, hide_index=True)
             
             csv_export = df_istoric.to_csv(index=False).encode('utf-8')
             st.download_button(
@@ -178,6 +187,6 @@ if exchange:
                 mime="text/csv",
             )
         else:
-            st.info("Jurnalul este gol momentan. Adaugă prima tranzacție din tab-ul anterior.")
+            st.info("Arhiva este goală momentan. Tranzacțiile închise salvate vor apărea aici.")
 else:
     st.info("👈 Introdu cheile API în meniul din stânga pentru a începe.")
